@@ -28,9 +28,9 @@
 
 ## Overview
 
-KataGO Android is an Android Go (Weiqi/Baduk) client with a built-in KataGo engine. It supports local CPU/GPU play and AI-powered game commentary via multiple LLM providers. This repository is a **super-repo** that aggregates all required components via `git subtree` (arm64-v8a only).
+KataGO Android is an Android Go (Weiqi/Baduk) client with a built-in KataGo engine. It supports local CPU/GPU play and AI-powered game commentary via multiple LLM providers. This repository is a **super-repo** that aggregates all required components as vendor copies (arm64-v8a only).
 
-> **App version:** 1.0.3 (versionCode 20260820) · **KataGo:** `main` branch via subtree · **Platform:** `arm64-v8a` only
+> **App version:** 1.0.3 (versionCode 20260820) · **KataGo:** vendor copy of `main` · **Platform:** `arm64-v8a` only
 
 ---
 
@@ -64,19 +64,19 @@ KataGO Android is an Android Go (Weiqi/Baduk) client with a built-in KataGo engi
 
 ## Super-Repo Structure
 
-This repo uses `git subtree` so that `KataGo` source can be edited directly in the super-repo and synced with upstream.
+This repo uses vendor copies so that `KataGo` source can be edited directly in the super-repo. Sync is done by replacing directories from upstream zips.
 
 ```
 KataGO_Android-source/          # super-repo (this repo)
-├── KataGo/                     # subtree: https://github.com/lightvector/KataGo.git#main (editable)
-├── vulkan-build/clvk/          # subtree: https://github.com/kpet/clvk.git#main
+├── KataGo/                     # vendor copy of https://github.com/lightvector/KataGo#main (editable)
+├── vulkan-build/clvk/          # vendor copy of https://github.com/kpet/clvk#main
 ├── build-tools/
-│   ├── opencl-headers/         # subtree: https://github.com/KhronosGroup/OpenCL-Headers.git#main
+│   ├── opencl-headers/         # vendor copy of https://github.com/KhronosGroup/OpenCL-Headers#main
 │   ├── android-toolchain.cmake # arm64-v8a, NDK autodetect (r25b and newer)
 │   ├── build-android-opencl.sh # build libkatago_opencl.so
 │   ├── android-clang / android-clang++ # NDK wrappers
-│   └── sync-subtrees.sh        # pull upstream updates
-├── KataGO_Android/             # native Android app (not subtree)
+│   └── sync-vendor.sh          # sync from upstream zips
+├── KataGO_Android/             # native Android app
 │   ├── app/src/main/kotlin/com/chuishui/katago/
 │   ├── app/src/main/jniLibs/arm64-v8a/
 │   └── gradle/
@@ -203,20 +203,23 @@ AiProvider → UI
 
 ---
 
-## Subtree Workflow
+## Vendor Sync Workflow
 
 ```bash
-# pull upstream (requires network)
-./build-tools/sync-subtrees.sh
-# or manually:
-git subtree pull --prefix=KataGo https://github.com/lightvector/KataGo.git main --squash -m "subtree: pull KataGo main"
-git subtree pull --prefix=vulkan-build/clvk https://github.com/kpet/clvk.git main --squash
-git subtree pull --prefix=build-tools/opencl-headers https://github.com/KhronosGroup/OpenCL-Headers.git main --squash
+# sync from upstream zips (requires network, curl/wget + unzip)
+./build-tools/sync-vendor.sh
+# or manually download and replace:
+# KataGo: https://github.com/lightvector/KataGo/archive/refs/heads/main.zip -> KataGo/
+# clvk: https://github.com/kpet/clvk/archive/refs/heads/main.zip -> vulkan-build/clvk/
+# OpenCL-Headers: https://github.com/KhronosGroup/OpenCL-Headers/archive/refs/heads/main.zip -> build-tools/opencl-headers/
 
-# edit KataGo directly in super-repo, then push to fork:
-git subtree split --prefix=KataGo --branch katago-split
-git push <your-fork> katago-split:main
+# review and commit
+git status --short
+git add -A && git commit -m "vendor: sync upstream main"
 ```
+
+> To switch to `git subtree` later:
+> `git subtree add --prefix=KataGo https://github.com/lightvector/KataGo.git main --squash`
 
 ---
 
