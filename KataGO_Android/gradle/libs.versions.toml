@@ -1,0 +1,36 @@
+[versions]
+agp = "8.7.3"
+kotlin = "2.2.20"
+composeBom = "2025.06.01"
+activityCompose = "1.9.3"
+lifecycle = "2.8.7"
+coreKtx = "1.13.1"
+coroutines = "1.9.0"
+workManager = "2.10.0"
+fluent = "v0.1.0"
+easycrop = "0.1.1"
+cropify = "0.5.2"
+junit = "4.13.2"
+orgJson = "20240303"
+
+[libraries]
+easycrop = { group = "io.github.mr0xf00", name = "easycrop", version.ref = "easycrop" }
+cropify = { group = "com.github.moyuruaizawa", name = "cropify", version.ref = "cropify" }
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+compose-ui = { group = "androidx.compose.ui", name = "ui" }
+compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+kotlinx-coroutines = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "workManager" }
+fluent-ui = { group = "io.github.compose-fluent", name = "fluent", version.ref = "fluent" }
+fluent-icons-extended = { group = "io.github.compose-fluent", name = "fluent-icons-extended", version.ref = "fluent" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+org-json = { group = "org.json", name = "json", version.ref = "orgJson" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

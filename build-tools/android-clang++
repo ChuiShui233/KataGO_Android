@@ -1,0 +1,23 @@
+#!/bin/sh
+# wrapper for android clang++ (arm64-v8a)
+SET_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SET_DIR/.." && pwd)"
+if [ -n "${ANDROID_NDK:-}" ]; then NDK="$ANDROID_NDK"
+elif [ -n "${ANDROID_NDK_HOME:-}" ]; then NDK="$ANDROID_NDK_HOME"
+else NDK="$(ls -d "$ROOT"/ndk/android-ndk-r* 2>/dev/null | sort | tail -n1)"
+fi
+if [ -z "${NDK:-}" ] || [ ! -d "$NDK" ]; then NDK="/media/sd/Kata-android/ndk/android-ndk-r25b"; fi
+SYSROOT="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+CLANG_VER=$(ls "$NDK/toolchains/llvm/prebuilt/linux-x86_64/lib64/clang/" 2>/dev/null | sort -V | tail -n1)
+if [ -z "$CLANG_VER" ]; then CLANG_VER="14.0.6"; fi
+exec /usr/bin/clang++ \
+  -target aarch64-linux-android29 \
+  --sysroot="$SYSROOT" \
+  -fuse-ld=lld \
+  -I"$SYSROOT/usr/include/c++/v1" \
+  -fopenmp=libomp \
+  -DBYTE_ORDER=1234 -DLITTLE_ENDIAN=1234 -DBIG_ENDIAN=4321 \
+  -I"$NDK/toolchains/llvm/prebuilt/linux-x86_64/lib64/clang/$CLANG_VER/include" \
+  -L"$NDK/toolchains/llvm/prebuilt/linux-x86_64/lib64/clang/$CLANG_VER/lib/linux/aarch64" \
+  -static-libstdc++ \
+  "$@"

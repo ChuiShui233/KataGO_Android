@@ -1,0 +1,20 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+/captures
+.externalNativeBuild
+.cxx
+
+# 签名密钥库（含私钥，绝不入库）
+app/keystore/
+app/keystore
+
+# 设备专属构建产物
+tools/aapt2/
+
+# 临时/冗余文件
+README.md.bak
+.kotlin/

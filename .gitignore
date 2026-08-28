@@ -1,0 +1,42 @@
+﻿# super-repo ignore
+# build output
+build/
+build-android/
+build-android-opencl/
+_cmake*/
+*.o
+*.a
+*.so
+!KataGO_Android/app/src/main/jniLibs/arm64-v8a/*.so
+!build-tools/opencl-shim/libOpenCL.so
+!build-tools/opencl-stub/libOpenCL.so
+!build-tools/opencl-shim/shim.c
+!build-tools/opencl-stub/stub.c
+
+# Gradle / Android
+.gradle/
+KataGO_Android/.gradle/
+KataGO_Android/build/
+KataGO_Android/app/build/
+KataGO_Android/.idea/
+KataGO_Android/*.iml
+KataGO_Android/local.properties
+KataGO_Android/.cxx/
+KataGO_Android/captures/
+KataGO_Android/.externalNativeBuild/
+KataGO_Android/.kotlin/
+KataGO_Android/app/keystore/
+
+# KataGo build
+KataGo/build/
+KataGo/cpp/build/
+tmp*.txt
+*.log
+
+# clvk build
+vulkan-build/clvk/build/
+
+# system
+.DS_Store
+Thumbs.db
+*.bak

@@ -1,0 +1,320 @@
+name: Presubmit
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  format:
+    name: Code formatting check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format clang-format-15
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check format
+        run: |
+          ./tests/check-format.sh
+        env:
+          CLANG_FORMAT_BINARY: clang-format-15
+  build:
+    name: Build ${{ matrix.os }} ${{ matrix.android }} ${{ matrix.android-abi }} compiler ${{ matrix.compiler-available }} online ${{ matrix.online-compiler }}
+    needs: format
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-2022]
+        online-compiler: [true, false]
+        compiler-available: [true]
+        android: ['']
+        include:
+          - os: ubuntu-24.04
+            online-compiler: false
+            compiler-available: false
+          - os: ubuntu-24.04
+            online-compiler: true
+            compiler-available: true
+            android-abi: arm64-v8a
+            android: Android
+          - os: windows-2022
+            online-compiler: true
+            unit: true
+          - os: ubuntu-24.04
+            online-compiler: false
+            unit: true
+            perfetto: true
+          - os: macos-latest
+            online-compiler: true
+            unit: true
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Free space on runner
+        if: ${{ matrix.android-abi != '' }}
+        run: |
+          set +x
+          dpkg-query -Wf '${Installed-Size}\t${Package}\n' | sort -n | tail -n 100
+          df -h
+          sudo apt-get update
+          sudo apt-get remove -y '^dotnet-.*'
+          sudo apt-get remove -y '^temurin-.*'
+          sudo apt-get remove -y azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          sudo rm -rf /usr/share/dotnet/
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /usr/local/lib/node_modules
+          dpkg-query -Wf '${Installed-Size}\t${Package}\n' | sort -n | tail -n 100
+          df -h
+      - name: Setup Ninja
+        uses: ./.github/actions/setup-ninja
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          variant: sccache
+          max-size: 2G
+          key: ${{ matrix.os }}-${{ matrix.android-abi }}-${{ matrix.online-compiler }}
+      - name: Download and extract Android NDK
+        if: ${{ matrix.android-abi != '' }}
+        run: |
+          mkdir ndk
+          cd ndk
+          wget https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
+          unzip android-ndk-r27d-linux.zip
+          rm android-ndk-r27d-linux.zip
+          ls -l
+      - name: Select build directory
+        shell: bash
+        run: |
+            df -h
+            if [ "$RUNNER_OS" == "Windows" ]; then
+              echo "builddir=C:/build" >> $GITHUB_ENV
+            else
+              echo "builddir=${{ github.workspace }}/build" >> $GITHUB_ENV
+            fi
+      - name: Fetch LLVM
+        run: python ./external/clspv/utils/fetch_sources.py --shallow --deps llvm
+      - name: Install Vulkan SDK and Runtime
+        if: ${{ matrix.android-abi == '' }}
+        uses: ./.github/actions/install-vulkan-sdk
+        with:
+          version: 1.4.309.0
+          rt-dir: ${{ github.workspace }}/vulkanrt
+      - name: Build libclc
+        if: ${{ matrix.android-abi != '' }}
+        env:
+          LIBCLC_DIR: ${{ github.workspace }}/libclc
+          BUILD_LIBCLC_DIR: ${{ github.workspace }}/build_libclc
+        run: |
+          set -x
+          echo "libclc=${LIBCLC_DIR}" >> $GITHUB_ENV
+          cmake -S '${{ github.workspace }}/external/clspv/third_party/llvm/llvm' -B ${BUILD_LIBCLC_DIR} -G Ninja \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_ENABLE_PROJECTS=clang \
+            -DRUNTIMES_spirv32-unknown-vulkan_LLVM_ENABLE_RUNTIMES=libclc \
+            -DRUNTIMES_spirv64-unknown-vulkan_LLVM_ENABLE_RUNTIMES=libclc \
+            -DLLVM_TARGETS_TO_BUILD=Native \
+            -DLLVM_RUNTIME_TARGETS="spirv32-unknown-vulkan;spirv64-unknown-vulkan"
+          cmake --build ${BUILD_LIBCLC_DIR} --target libclc
+          mkdir -p ${LIBCLC_DIR}/spirv32-unknown-vulkan
+          mkdir -p ${LIBCLC_DIR}/spirv64-unknown-vulkan
+          cp $(find ${BUILD_LIBCLC_DIR} -name libclc.bc | grep "spirv32-unknown-vulkan") ${LIBCLC_DIR}/spirv32-unknown-vulkan/
+          cp $(find ${BUILD_LIBCLC_DIR} -name libclc.bc | grep "spirv64-unknown-vulkan") ${LIBCLC_DIR}/spirv64-unknown-vulkan/
+          rm -rf ${BUILD_LIBCLC_DIR}
+      - name: Prepare Android CMake arguments
+        if: ${{ matrix.android-abi != '' }}
+        run: |
+          echo "android-cmake-args=-DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/ndk/android-ndk-r27d/build/cmake/android.toolchain.cmake -DANDROID_ABI=${{ matrix.android-abi }} -DVulkan_LIBRARY=${{ github.workspace }}/ndk/android-ndk-r27d/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/35/libvulkan.so -DCLSPV_EXTERNAL_LIBCLC_DIR=${{ env.libclc }}" >> $GITHUB_ENV
+      - name: Build Perfetto
+        if: ${{ matrix.perfetto }}
+        shell: bash
+        env:
+          PERFETTO_DIR: ${{ github.workspace }}/external/perfetto
+        run: |
+          echo "perfettodir=${PERFETTO_DIR}" >> $GITHUB_ENV
+          git clone --depth 1 --branch v53.0 https://github.com/google/perfetto ${PERFETTO_DIR}
+          ${PERFETTO_DIR}/tools/install-build-deps
+          ${PERFETTO_DIR}/tools/setup_all_configs.py
+          ${PERFETTO_DIR}/tools/ninja -C ${PERFETTO_DIR}/out/linux_clang_release trace_processor_shell
+      - name: Configure
+        shell: bash
+        run: |
+            set -x
+            ls -l '${{ github.workspace }}'
+            mkdir '${{ env.builddir }}'
+            cd '${{ env.builddir }}'
+            mkdir install
+            cmake --version
+            cmake '${{ github.workspace }}' -G Ninja \
+              -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCLVK_ENABLE_ASSERTIONS=ON \
+              -DCLVK_VULKAN_IMPLEMENTATION=system \
+              -DCMAKE_INSTALL_PREFIX='${{ env.builddir}}'/install \
+              -DCLVK_COMPILER_AVAILABLE=${{ matrix.compiler-available }} \
+              -DCLVK_UNIT_TESTING=${{ matrix.unit }} \
+              -DCLVK_PERFETTO_ENABLE=${{ matrix.perfetto }} \
+              -DCLVK_PERFETTO_SDK_DIR=${{ env.perfettodir }}/sdk \
+              ${{ env.android-cmake-args }} \
+              -DCLVK_CLSPV_ONLINE_COMPILER=${{ matrix.online-compiler }}
+      - name: Build
+        run: cmake --build '${{ env.builddir }}' --config Release --parallel
+      - name: Build clspv
+        run: cmake --build '${{ env.builddir }}' --config Release --parallel --target clspv
+      - name: Build clang
+        run: cmake --build '${{ env.builddir }}' --config Release --parallel --target clang
+        if: ${{ matrix.compiler-available && matrix.android-abi == '' }}
+      # Our build is complete, we can now delete all the static libraries and
+      # intermediate objects to free up space.
+      - name: Free space on the runner
+        shell: bash
+        run: |
+          set -x
+          df -h
+          find '${{ env.builddir }}' -name "*.a" -delete
+          find '${{ env.builddir }}' -name "*.o" -delete
+          df -h
+      - name: Install
+        run: cmake --install '${{ env.builddir }}'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: clvk-${{ matrix.os }}-${{ matrix.android }}-${{ matrix.android-abi }}-compiler-${{ matrix.compiler-available }}-online-${{ matrix.online-compiler }}
+          path: ${{ env.builddir }}/install
+      - name: Show stats
+        shell: bash
+        run: df -h
+      - name: Download Swiftshader artifacts
+        uses: dawidd6/action-download-artifact@v21
+        with:
+          workflow: build-mesa.yml
+          workflow_conclusion: success
+          name: mesa-${{ runner.os }}
+          path: mesa
+      - name: Fixup Mesa ICD JSON
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            SOURCE_JSON='${{ github.workspace }}'/mesa/lvp_icd.aarch64.json
+          else
+            SOURCE_JSON='${{ github.workspace }}'/mesa/lvp_icd.x86_64.json
+          fi
+          ./tests/fixup-mesa-icd-json.py --input $SOURCE_JSON --output '${{ github.workspace }}'/mesa/lvp_icd.json --runner-os $RUNNER_OS
+      - name: Register Mesa ICD
+        if: ${{ matrix.os == 'windows-2022' }}
+        run: |
+          reg query 'HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers'
+          reg add 'HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers' /v '${{ github.workspace }}\mesa\lvp_icd.json' /t REG_DWORD /d 0
+          reg query 'HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers'
+      - name: Prepare test execution
+        shell: bash
+        run: |
+          ls -l '${{ github.workspace }}'/mesa
+          ls -l '${{ env.builddir }}'
+          echo "VK_ICD_FILENAMES=${{ github.workspace }}/mesa/lvp_icd.json" >> $GITHUB_ENV
+          echo "CLVK_LOG=3" >> $GITHUB_ENV
+          echo "CLVK_LOG_DEST=stderr" >> $GITHUB_ENV
+          echo "VK_LOADER_DEBUG=all" >> $GITHUB_ENV
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            echo "exe-ext=.exe" >> $GITHUB_ENV
+          else
+            echo "exe-ext=" >> $GITHUB_ENV
+          fi
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            echo "LD_LIBRARY_PATH=${{ github.workspace }}/mesa/" >> $GITHUB_ENV
+          fi
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            echo "DYLD_LIBRARY_PATH=${{ github.workspace }}/mesa/" >> $GITHUB_ENV
+          fi
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            find '${{ env.builddir }}' -name clang.exe
+            find '${{ env.builddir }}' -name OpenCL.dll
+            cat '${{ github.workspace }}'/mesa/lvp_icd.json
+            cp '${{ github.workspace }}'/vulkanrt/vulkan-1.dll '${{ env.builddir }}'
+            cp '${{ github.workspace }}'/mesa/vulkan_lvp.dll '${{ github.workspace }}'/..
+            cp '${{ env.builddir }}'/src/OpenCL.dll '${{ env.builddir }}'
+          fi
+          echo "testbindir=${{ env.builddir }}" >> $GITHUB_ENV
+      - name: Config tests
+        shell: bash
+        if: ${{ matrix.unit }}
+        run: ./tests/config/run_test.sh '${{ env.testbindir }}' '${{ github.workspace }}'/tests/config
+      - name: SHA-1 tests
+        if: ${{ matrix.android-abi == '' }}
+        run: ${{ env.testbindir }}/sha1_tests${{ env.exe-ext }}
+      - name: Simple test (static)
+        if: ${{ matrix.compiler-available && matrix.android-abi == '' }}
+        run: ${{ env.testbindir }}/simple_test_static${{ env.exe-ext }}
+      - name: Simple test
+        if: ${{ matrix.compiler-available && matrix.android-abi == '' }}
+        run: ${{ env.testbindir }}/simple_test${{ env.exe-ext }}
+      - name: API tests
+        if: ${{ matrix.compiler-available && matrix.android-abi == '' }}
+        run: ${{ env.testbindir }}/api_tests${{ env.exe-ext }}
+        env:
+          CLVK_LOG: 2
+      # TODO #477 - enable these tests
+      # - name: API tests (physical addressing)
+      #   if: ${{ matrix.compiler-available && matrix.android-abi == '' }}
+      #   run: ${{ env.testbindir }}/api_tests${{ env.exe-ext }}
+      #   env:
+      #     CLVK_LOG: 2
+      #     CLVK_SPIRV_ARCH: spir64
+      #     CLVK_PHYSICAL_ADDRESSING: 1
+      - name: Offline compilation simple tests
+        if: ${{ matrix.android-abi == '' }}
+        run: |
+          ${{ env.builddir }}/clspv${{ env.exe-ext }} -o simple.spv ./tests/simple-from-binary/simple.cl
+          ${{ env.testbindir }}/simple_test_from_binary${{ env.exe-ext }}
+          ${{ env.testbindir }}/simple_test_from_binary_static${{ env.exe-ext }}
+      - name: Offline IL compilation simple tests
+        if: ${{ matrix.compiler-available && matrix.android-abi == '' }}
+        run: |
+          ${{ env.builddir }}/external/clspv/third_party/llvm/bin/clang${{ env.exe-ext }} -Xclang -finclude-default-header -c -target spir -O0 -emit-llvm -o simple-cl.bc ./tests/simple-from-il-binary/simple.cl
+          ${{ env.builddir }}/llvm-spirv${{ env.exe-ext }} simple-cl.bc -o simple-cl.spv
+          ${{ env.testbindir }}/simple_test_from_il_binary${{ env.exe-ext }}
+          ${{ env.testbindir }}/simple_test_from_il_binary_static${{ env.exe-ext }}
+      - name: Offline LLVM-IR compilation simple tests
+        if: ${{ matrix.compiler-available && matrix.android-abi == '' }}
+        run: |
+          ${{ env.builddir }}/clspv${{ env.exe-ext }} -output-format=bc -o simple.bc ./tests/simple-from-llvm-ir-binary/simple.cl
+          ${{ env.testbindir }}/simple_test_from_llvm_ir_binary${{ env.exe-ext }}
+          ${{ env.testbindir }}/simple_test_from_llvm_ir_binary_static${{ env.exe-ext }}
+      - name: API tests (with validation layers)
+        if: ${{ matrix.compiler-available && matrix.android-abi == '' }}
+        shell: bash
+        run: |
+          ${{ env.testbindir }}/api_tests${{ env.exe-ext }}
+          cat validation.log
+          if [ -s validation.log ]; then
+            echo "VALIDATION LAYERS REPORTED ERRORS"
+            exit 1
+          fi
+        env:
+          CLVK_LOG: 1
+          CLVK_LOG_GROUPS: validation
+          CLVK_LOG_GROUPS_ONLY: 1
+          CLVK_LOG_DEST: file:validation.log
+          CLVK_VALIDATION_LAYERS: 1
+          VK_ADD_LAYER_PATH: ${{ env.VULKAN_SDK_LAYERS_MANIFEST_PATH }}
+          LD_LIBRARY_PATH: ${{ env.VULKAN_SDK_LIB_PATH }}:${{ env.LD_LIBRARY_PATH }}
+      - name: Perfetto test
+        if: ${{ matrix.perfetto }}
+        run: |
+          ${{ env.testbindir }}/simple_test
+          ./tests/perfetto/check-perfetto-trace.sh ${CLVK_PERFETTO_TRACE_DEST} ./tests/perfetto/simple_test-expectation.txt
+          ${{ env.testbindir}}/api_tests --gtest_filter=WithCommandQueue.EnqueueTooManyCommandsWithRetry
+          ./tests/perfetto/check-perfetto-trace.sh ${CLVK_PERFETTO_TRACE_DEST} ./tests/perfetto/api_tests.EnqueueTooManyCommandWithRetry-expectation.txt
+        env:
+          CLVK_PERFETTO_TRACE_DEST: ${{ env.testbindir }}/perfetto.trace
+          TRACE_PROCESSOR_SHELL: ${{ env.perfettodir }}/out/linux_clang_release/trace_processor_shell

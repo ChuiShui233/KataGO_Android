@@ -1,0 +1,249 @@
+#!/usr/bin/python3
+import sys
+import os
+import argparse
+import logging
+import requests
+import hashlib
+import configparser
+import datetime
+import json
+import re
+
+from requests_toolbelt.adapters import host_header_ssl
+from requests.auth import HTTPBasicAuth
+
+#Command and args-------------------------------------------------------------------
+
+description = """
+Upload neural net weights to server
+"""
+
+parser = argparse.ArgumentParser(description=description)
+parser.add_argument('-run-name', help='run name', required=True)
+parser.add_argument('-model-name', help='model name', required=True)
+parser.add_argument('-model-file', help='model file for kg engine alone', required=True)
+parser.add_argument('-model-zip', help='zipped model file with tf weights', required=True)
+parser.add_argument('-upload-log-file', help='log upload data to this file', required=True)
+parser.add_argument('-metadata-file', help='metadata.json file for recording some stats', required=False)
+parser.add_argument('-train-step', help='train_step (global_step_samples) to record, overrides metadata file if both given', type=int, required=False)
+parser.add_argument('-total-num-data-rows', help='total_num_data_rows to record, overrides metadata file if both given', type=int, required=False)
+parser.add_argument('-parents-dir', help='dir with uploaded models dirs for finding parent', required=False)
+parser.add_argument('-parent-network-full-name', help='use this as the parent for loggamma and such', required=False)
+parser.add_argument('-connection-config', help='config with serverUrl and username and password', required=True)
+parser.add_argument('-not-enabled', help='upload model where it is not enabled for train/rating to begin with', required=False, action='store_true')
+parser.add_argument('-rating-only', help='upload for rating only or not', type=int, required=False)
+parser.add_argument('-notes', help='extra notes to record for model', required=False)
+parser.add_argument('-network-size', help='override network_size instead of extracting from model name', required=False)
+parser.add_argument('-confirm', help='Ask for confirmation before upload', action="store_true", required=False)
+args = vars(parser.parse_args())
+
+run_name = args["run_name"]
+model_name = args["model_name"]
+model_file = args["model_file"]
+model_zip = args["model_zip"]
+upload_log_file = args["upload_log_file"]
+metadata_file = args["metadata_file"]
+train_step = args["train_step"]
+total_num_data_rows = args["total_num_data_rows"]
+parents_dir = args["parents_dir"]
+parent_network_full_name = args["parent_network_full_name"]
+connection_config_file = args["connection_config"]
+not_enabled = args["not_enabled"]
+rating_only = args["rating_only"]
+notes = args["notes"]
+confirm = args["confirm"]
+
+loglines = []
+def log(s):
+    loglines.append(s)
+    print(s,flush=True)
+
+def write_log():
+    with open(upload_log_file,"w+") as f:
+        for line in loglines:
+            f.write(line + "\n")
+
+with open(connection_config_file,'r') as f:
+    connection_config_content = "[DEFAULT]\n" + f.read()
+config_parser = configparser.ConfigParser()
+config_parser.read_string(connection_config_content)
+base_server_url = config_parser["DEFAULT"]["serverUrl"]
+
+if not base_server_url.endswith("/"):
+    base_server_url = base_server_url + "/"
+
+username = config_parser["DEFAULT"]["username"]
+password = config_parser["DEFAULT"]["password"]
+sslVerificationHost = None
+if "sslVerificationHost" in config_parser["DEFAULT"]:
+    sslVerificationHost = config_parser["DEFAULT"]["sslVerificationHost"]
+sslVerifyPemPath = None
+if "sslVerifyPemPath" in config_parser["DEFAULT"]:
+    sslVerifyPemPath = config_parser["DEFAULT"]["sslVerifyPemPath"]
+
+log("now" + ": " + str(datetime.datetime.now()))
+log("run_name" + ": " + run_name)
+log("model_name" + ": " + model_name)
+log("model_file" + ": " + model_file)
+log("model_zip" + ": " + model_zip)
+log("parents_dir" + ": " + str(parents_dir))
+log("metadata_file" + ": " + str(metadata_file))
+log("train_step" + ": " + str(train_step))
+log("total_num_data_rows" + ": " + str(total_num_data_rows))
+log("username" + ": " + username)
+log("base_server_url" + ": " + base_server_url)
+
+network_size = args["network_size"] if args["network_size"] is not None else model_name.split("-")[1]
+if not re.fullmatch(r"b[0-9]+c[0-9]+[a-z0-9]*", network_size):
+    raise Exception(f"Invalid network_size '{network_size}': must match b<digits>c<digits><lowercase alphanumeric>")
+
+model_file_extension = None
+if model_file.endswith(".bin.gz"):
+    model_file_extension = ".bin.gz"
+elif model_file.endswith(".txt.gz"):
+    model_file_extension = ".txt.gz"
+else:
+    raise Exception("Model file must end in .bin.gz or .txt.gz")
+
+possible_parents = []
+if parents_dir is not None:
+    for fname in os.listdir(parents_dir):
+        if fname.startswith(network_size):
+            pieces = fname.split("-")
+            datasamples = int(pieces[2][1:])
+            possible_parents.append((fname, datasamples))
+    possible_parents.sort(key=(lambda x: x[1]))
+
+def check_network_exists(url):
+    try:
+        if sslVerificationHost is not None:
+            sess = requests.Session()
+            sess.mount('https://', host_header_ssl.HostHeaderSSLAdapter())
+            if sslVerifyPemPath is not None:
+                response = sess.get(url, headers={"Host": sslVerificationHost}, verify=sslVerifyPemPath)
+            else:
+                response = sess.get(url, headers={"Host": sslVerificationHost})
+        else:
+            if sslVerifyPemPath is not None:
+                response = requests.get(url, verify=sslVerifyPemPath)
+            else:
+                response = requests.get(url,files=data)
+        response.raise_for_status()  # Raises HTTPError for bad responses
+        return response.json()
+    except (requests.RequestException, json.JSONDecodeError) as e:
+        log(f"Failed to query/parse JSON from {url} when checking if network exists, does it actually exist?")
+        raise
+
+parent_network_url = None
+if parent_network_full_name is None and len(possible_parents) > 0:
+    parent_network_name_without_run = possible_parents[-1][0]
+    parent_network_full_name = run_name + "-" + parent_network_name_without_run
+if parent_network_full_name is not None:
+    parent_network_url = base_server_url + "api/networks/" + parent_network_full_name + "/"
+    check_network_exists(parent_network_url)
+
+if not model_name.startswith(run_name+"-"):
+    raise Exception("Model name must start with run name")
+
+metadata = None
+if metadata_file is not None:
+    with open(metadata_file) as f:
+        metadata = json.load(f)
+
+with open(model_file,"rb") as f:
+    model_file_contents = f.read()
+    model_file_bytes = len(model_file_contents)
+    model_file_sha256 = hashlib.sha256(model_file_contents).hexdigest()
+    del model_file_contents
+
+url = base_server_url + "api/networks/"
+
+with open(model_file,"rb") as model_file_handle:
+    with open(model_zip,"rb") as model_zip_handle:
+        log_gamma_offset = 0
+        if network_size == "b40c768nbt":
+            log_gamma_offset = -2.9
+            rating_only = rating_only if rating_only is not None else 1
+        elif network_size == "b60c320":
+            log_gamma_offset = -1.5
+            rating_only = rating_only if rating_only is not None else 1
+        elif network_size == "b28c512nbt":
+            log_gamma_offset = -1.1
+            rating_only = rating_only if rating_only is not None else 0
+        elif network_size == "b18c384nbt":
+            log_gamma_offset = 0
+            rating_only = rating_only if rating_only is not None else 1
+        else:
+            rating_only = rating_only if rating_only is not None else 1
+
+        data = {
+            "run": (None, base_server_url + "api/runs/" + run_name + "/"),
+            "name": (None, model_name),
+            "network_size": (None, network_size),
+            "is_random": (None, "false"),
+            "model_file": (model_name + model_file_extension, model_file_handle, "application/octet-stream"),
+            "model_file_bytes": (None, model_file_bytes),
+            "model_file_sha256": (None, model_file_sha256),
+            "training_games_enabled": (None, ("false" if (not_enabled or rating_only != 0) else "true")),
+            "rating_games_enabled": (None, ("false" if not_enabled else "true")),
+            "log_gamma_offset": (None, str(log_gamma_offset)),
+            "model_zip_file": (model_name + ".zip", model_zip_handle, "application/octet-stream"),
+        }
+
+        if parent_network_url is not None:
+            data["parent_network"] = (None, parent_network_url)
+
+        if notes is not None:
+            data["notes"] = (None, notes)
+
+        # train_step and total_num_data_rows may come metadata or cmdline
+        # cmdline values take precedence if both exist.
+        train_step_value = train_step
+        total_num_data_rows_value = total_num_data_rows
+        if metadata is not None:
+            if train_step_value is None and "global_step_samples" in metadata:
+                train_step_value = metadata["global_step_samples"]
+            if total_num_data_rows_value is None and "total_num_data_rows" in metadata:
+                total_num_data_rows_value = metadata["total_num_data_rows"]
+            if "extra_stats" in metadata:
+                data["extra_stats"] = (None, json.dumps(metadata["extra_stats"]))
+
+        if train_step_value is not None:
+            data["train_step"] = (None, train_step_value)
+        if total_num_data_rows_value is not None:
+            data["total_num_data_rows"] = (None, total_num_data_rows_value)
+
+        # print(requests.Request('POST', base_server_url, files=data).prepare().body)
+
+        if confirm:
+            print(json.dumps({key: value for (key,value) in data.items() if key not in ["model_file","model_zip_file"]}, indent=2, sort_keys=True))
+            if input("Are you sure you want to proceed? (y/N): ").lower() != 'y':
+                print("Aborting")
+                exit()
+
+        if sslVerificationHost is not None:
+            sess = requests.Session()
+            sess.mount('https://', host_header_ssl.HostHeaderSSLAdapter())
+            if sslVerifyPemPath is not None:
+                result = sess.post(url, files=data, auth=HTTPBasicAuth(username,password), headers={"Host": sslVerificationHost}, verify=sslVerifyPemPath)
+            else:
+                result = sess.post(url, files=data, auth=HTTPBasicAuth(username,password), headers={"Host": sslVerificationHost})
+        else:
+            if sslVerifyPemPath is not None:
+                result = requests.post(url, files=data, auth=HTTPBasicAuth(username,password), verify=sslVerifyPemPath)
+            else:
+                result = requests.post(url,files=data,auth=HTTPBasicAuth(username,password))
+
+log("Post status code: " + str(result.status_code))
+log("Post result: " + str(result.text))
+if result.status_code == 400 and str(result.text).find("already exist") != -1:
+    log("Got 400 error with substring 'already exist', network already uploaded? So assuming everything is good")
+    write_log()
+elif result.status_code == 200 or result.status_code == 201 or result.status_code == 202:
+    log("Post success")
+    write_log()
+else:
+    log("Post failed")
+    write_log()
+    sys.exit(1)

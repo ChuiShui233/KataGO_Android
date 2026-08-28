@@ -1,0 +1,1 @@
+# Keep engine binary logic out of any shrinking; nothing extra needed for a sample app.
