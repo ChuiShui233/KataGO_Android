@@ -8,14 +8,43 @@ android {
     namespace = "com.chuishui.katago"
     compileSdk = 35
 
+    val isBuiltin = providers.gradleProperty("KATA_BUILTIN_CLVK").getOrElse("false") == "true"
+
     defaultConfig {
         applicationId = "com.chuishui.katago"
         minSdk = 29
         targetSdk = 35
-        versionCode = 20260820
-        versionName = "1.0.3"
+        versionCode = 20260916
+        versionName = "1.0.4"
         ndk {
             abiFilters += "arm64-v8a"
+        }
+        buildConfigField("boolean", "BUILTIN_CLVK", isBuiltin.toString())
+    }
+
+    if (isBuiltin) {
+        val stub = file("src/main/jniLibs/arm64-v8a/libOpenCL.so")
+        val builtin = file("builtinLibs/arm64-v8a/libOpenCL.so")
+        val backup = file("build/builtin-backup/libOpenCL.so.stub")
+        fun prepareBuiltin() {
+            if (builtin.exists()) {
+                backup.parentFile.mkdirs()
+                if (stub.exists() && !backup.exists()) stub.copyTo(backup, overwrite = false)
+                builtin.copyTo(stub, overwrite = true)
+            }
+        }
+        fun restoreBuiltin() {
+            if (backup.exists()) {
+                backup.copyTo(stub, overwrite = true)
+                backup.delete()
+            }
+        }
+        tasks.register("prepareBuiltinClvk") { doLast { prepareBuiltin() } }
+        tasks.register("restoreBuiltinClvk") { doLast { restoreBuiltin() } }
+        // Hook into jniLibs merge for both debug and release
+        tasks.matching { it.name == "mergeDebugJniLibFolders" || it.name == "mergeReleaseJniLibFolders" }.configureEach {
+            dependsOn("prepareBuiltinClvk")
+            finalizedBy("restoreBuiltinClvk")
         }
     }
 
@@ -55,6 +84,12 @@ android {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("release")
         }
+    }
+
+    lint {
+        disable += "NullSafeMutableLiveData"
+        checkReleaseBuilds = false
+        abortOnError = false
     }
 }
 

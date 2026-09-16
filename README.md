@@ -24,13 +24,17 @@
   <a href="#ai-commentary">AI Commentary</a>
 </p>
 
+<p align="center">
+  <a href="KataGO_Android/README.md">📖 中文详细文档 → KataGO_Android/README.md</a>
+</p>
+
 ---
 
 ## Overview
 
 KataGO Android is an Android Go (Weiqi/Baduk) client with a built-in KataGo engine. It supports local CPU/GPU play and AI-powered game commentary via multiple LLM providers. This repository is a **super-repo** that aggregates all required components as vendor copies (arm64-v8a only).
 
-> **App version:** 1.0.3 (versionCode 20260820) · **KataGo:** vendor copy of `main` · **Platform:** `arm64-v8a` only
+> **App version:** 1.0.4 (versionCode 20260916) · **KataGo:** vendor copy of `main` · **Platform:** `arm64-v8a` only
 
 ---
 
@@ -46,6 +50,23 @@ KataGO Android is an Android Go (Weiqi/Baduk) client with a built-in KataGo engi
 - **Request queue & routing:** priority `user > blunder > turning point > mistake > fight > good move`, auto discard stale, auto failover (`manual / auto / round-robin / fastest / cheapest`)
 - **Security:** Android Keystore + AES-GCM, Token usage tracking
 - **Board UX:** tap-preview + confirm, AI pondering marks, coordinates, game save/load, model import, multi-language (zh-CN/zh-TW/en/ja/ko/de)
+
+---
+
+## Preview
+
+<p align="center">
+  <img src="preview/Screenshot_2026-09-16-22-11-51-93_d3125a8f04160f42f8628d069234ae7e.png" width="160" />
+  <img src="preview/Screenshot_2026-09-16-22-12-13-39_d3125a8f04160f42f8628d069234ae7e.png" width="160" />
+  <img src="preview/Screenshot_2026-09-16-22-12-16-29_d3125a8f04160f42f8628d069234ae7e.png" width="160" />
+  <img src="preview/Screenshot_2026-09-16-22-12-19-57_d3125a8f04160f42f8628d069234ae7e.png" width="160" />
+</p>
+<p align="center">
+  <img src="preview/Screenshot_2026-09-16-22-12-23-27_d3125a8f04160f42f8628d069234ae7e.png" width="160" />
+  <img src="preview/Screenshot_2026-09-16-22-12-39-05_d3125a8f04160f42f8628d069234ae7e.png" width="160" />
+  <img src="preview/Screenshot_2026-08-21-10-15-18-83_d3125a8f04160f.png" width="160" />
+  <img src="preview/Screenshot_2026-08-21-10-15-21-10_d3125a8f04160f.png" width="160" />
+</p>
 
 ---
 
@@ -125,6 +146,23 @@ cd KataGO_Android
 # output: KataGO_Android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+#### Built-in full driver variant (offline, no download needed)
+
+Standard APK keeps a 20KB stub at `app/src/main/jniLibs/arm64-v8a/libOpenCL.so` and downloads the full driver (≈75MB stripped) at runtime from `https://download.chuishui.top/libOpenCL.so`.
+
+For a fully offline APK where `libOpenCL.so` is bundled and the import UI is hidden:
+
+```bash
+# Full driver already at app/builtinLibs/arm64-v8a/libOpenCL.so (75MB stripped via llvm-strip)
+# Stub stays at app/src/main/jniLibs for standard builds
+./gradlew assembleDebug -PKATA_BUILTIN_CLVK=true
+# or release (signed)
+./gradlew assembleRelease -PKATA_BUILTIN_CLVK=true -PKATA_ANDROID_KEYSTORE_PASSWORD=xxx -PKATA_ANDROID_KEY_PASSWORD=xxx
+# output: ~67MB APK (vs 38MB standard) with lib/arm64-v8a/libOpenCL.so = 78MB
+```
+
+`KATA_BUILTIN_CLVK=true` sets `BuildConfig.BUILTIN_CLVK=true` and the `prepareBuiltinClvk` task temporarily overlays `builtinLibs` onto `jniLibs` before `merge*JniLibFolders`; at runtime `MainActivity.hasBuiltinDriver()` (`nativeLibraryDir/libOpenCL.so` valid aarch64 ELF >1MB) hides **Settings → OpenCL** and the onboarding **Vulkan** step, and disables download/import.
+
 Release signing (optional, via Gradle properties):
 
 ```properties
@@ -146,7 +184,8 @@ or import via in-app file picker.
 
 ### GPU / clvk
 
-Import a clvk-built `libOpenCL.so` via **Settings → GPU** file picker (`.zip` or `.so` from `build-tools/install-clvk-lib.sh`). Without it, GPU mode is disabled and engine falls back to CPU.
+- **Standard (stub):** Import a clvk-built `libOpenCL.so` via **Settings → GPU** file picker (`.zip` or `.so` from `build-tools/install-clvk-lib.sh`) or let the app download it from `https://download.chuishui.top/libOpenCL.so` (onboarding). Without it, GPU mode is disabled and engine falls back to CPU.
+- **Built-in (full):** No import needed — driver is already inside the APK (see built-in variant above).
 
 ```bash
 # after building clvk via GitHub Actions artifact

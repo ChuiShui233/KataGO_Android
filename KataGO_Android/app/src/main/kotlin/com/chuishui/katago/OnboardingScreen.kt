@@ -36,6 +36,7 @@ internal enum class OnboardingStep { Welcome, Vulkan, Ready }
 internal fun OnboardingScreen(
     darkTheme: Boolean,
     clvkInstalled: Boolean,
+    isBuiltinClvk: Boolean = false,
     openClTransferProgress: Float?,
     openClTransferPhase: Int,
     openClTransferSpeed: Float?,
@@ -88,13 +89,17 @@ internal fun OnboardingScreen(
             ) {
                 OnboardingWelcomeStep(
                     darkTheme = darkTheme,
-                    onNext = { onStepChange(OnboardingStep.Vulkan) },
+                    onNext = {
+                        if (isBuiltinClvk) onStepChange(OnboardingStep.Ready)
+                        else onStepChange(OnboardingStep.Vulkan)
+                    },
                 )
             }
         }
         // Drive the driver page via a transition state so the slide-up animation
         // also plays when it is opened directly from the settings screen.
-        val showVulkan = step == OnboardingStep.Vulkan && !dismissing
+        // Built-in driver hides the Vulkan step entirely.
+        val showVulkan = step == OnboardingStep.Vulkan && !dismissing && !isBuiltinClvk
         val vulkanTransition = remember { MutableTransitionState(false) }
         LaunchedEffect(showVulkan) {
             vulkanTransition.targetState = showVulkan
@@ -140,7 +145,10 @@ internal fun OnboardingScreen(
             ) {
                 OnboardingReadyStep(
                     darkTheme = darkTheme,
-                    onBack = { onStepChange(OnboardingStep.Vulkan) },
+                    onBack = {
+                        if (isBuiltinClvk) onStepChange(OnboardingStep.Welcome)
+                        else onStepChange(OnboardingStep.Vulkan)
+                    },
                     onFinished = {
                         dismissing = true
                         onFinished()
@@ -166,7 +174,7 @@ internal fun OnboardingScreen(
         when {
             showSkipDialog -> showSkipDialog = false
             fromSettings -> onFinished()
-            step == OnboardingStep.Ready -> onStepChange(OnboardingStep.Vulkan)
+            step == OnboardingStep.Ready -> if (isBuiltinClvk) onStepChange(OnboardingStep.Welcome) else onStepChange(OnboardingStep.Vulkan)
             else -> onStepChange(OnboardingStep.Welcome)
         }
     }

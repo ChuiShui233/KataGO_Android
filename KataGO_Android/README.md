@@ -20,6 +20,21 @@
 - **引擎容错**：启动失败自动重试一次，仍失败再返回主页并显示诊断信息。
 - **多语言**：中文（简/繁）、英文、日文、韩文、德文。
 
+## 预览
+
+<p align="center">
+  <img src="../preview/Screenshot_2026-09-16-22-11-51-93_d3125a8f04160f42f8628d069234ae7e.png" width="160" />
+  <img src="../preview/Screenshot_2026-09-16-22-12-13-39_d3125a8f04160f42f8628d069234ae7e.png" width="160" />
+  <img src="../preview/Screenshot_2026-09-16-22-12-16-29_d3125a8f04160f42f8628d069234ae7e.png" width="160" />
+  <img src="../preview/Screenshot_2026-09-16-22-12-19-57_d3125a8f04160f42f8628d069234ae7e.png" width="160" />
+</p>
+<p align="center">
+  <img src="../preview/Screenshot_2026-09-16-22-12-23-27_d3125a8f04160f42f8628d069234ae7e.png" width="160" />
+  <img src="../preview/Screenshot_2026-09-16-22-12-39-05_d3125a8f04160f42f8628d069234ae7e.png" width="160" />
+  <img src="../preview/Screenshot_2026-08-21-10-15-18-83_d3125a8f04160f.png" width="160" />
+  <img src="../preview/Screenshot_2026-08-21-10-15-21-10_d3125a8f04160f.png" width="160" />
+</p>
+
 ## 技术栈
 
 | 层级 | 技术 |
@@ -130,6 +145,23 @@ kataA/
 
 > `build.sh` 使用本机路径的 Gradle 发行版，请按你的环境调整。
 
+#### 内置完整驱动构建（离线，无需下载）
+
+标准包在 `app/src/main/jniLibs/arm64-v8a/libOpenCL.so` 仅打包 20KB 转发 stub，运行时在首启/设置中从 `https://download.chuishui.top/libOpenCL.so` 下载完整驱动
+
+如需内置完整驱动的离线包（无需下载，自动隐藏导入 UI）：
+
+```bash
+# 完整驱动已在 app/builtinLibs/arm64-v8a/libOpenCL.so（75MB，git 跟踪）
+# 精简 stub 仍保留在 app/src/main/jniLibs 供标准包使用
+./gradlew assembleDebug -PKATA_BUILTIN_CLVK=true
+# 或签名发布版
+./gradlew assembleRelease -PKATA_BUILTIN_CLVK=true -PKATA_ANDROID_KEYSTORE_PASSWORD=xxx -PKATA_ANDROID_KEY_PASSWORD=xxx
+# 产物约 67MB（标准版约 38MB），含 lib/arm64-v8a/libOpenCL.so = 78MB
+```
+
+`KATA_BUILTIN_CLVK=true` 会置 `BuildConfig.BUILTIN_CLVK=true`，`prepareBuiltinClvk` 任务在 `merge*JniLibFolders` 前将 `builtinLibs` 临时覆盖到 `jniLibs`，打包后还原；运行时 `MainActivity.hasBuiltinDriver()`（`nativeLibraryDir/libOpenCL.so` 为有效 aarch64 ELF >1MB）自动隐藏 **设置 → OpenCL** 与首启 **Vulkan** 导入页，并禁用下载/导入。
+
 发布版签名（可选），通过 Gradle 属性提供，否则不启用签名：
 
 ```properties
@@ -161,7 +193,8 @@ bash build-tools/build-android-opencl.sh
 
 ## GPU 引擎与 clvk
 
-GPU 对局需要 `libOpenCL.so`（clvk，经由 Vulkan 运行 OpenCL）。请使用我们编译的 clvk——为适配 KataGo 修改了官方源码。可通过应用内链接下载或者从我的服务器下载并导入，或点击"选择文件导入"导入 `.zip` / `.so` 文件。导入成功后 GPU 对局走 Vulkan；否则自动退回 CPU。
+- **标准版（转发 stub）：** GPU 对局需要 `libOpenCL.so`（clvk，经由 Vulkan 运行 OpenCL）。请使用我们编译的 clvk——为适配 KataGo 修改了官方源码。可通过应用内链接（`https://download.chuishui.top/libOpenCL.so`）下载或“选择文件导入”导入 `.zip/.so`，导入后走 Vulkan，否则回退 CPU。
+- **内置版（完整驱动）：** 已内置完整 `libOpenCL.so`（见上节内置构建），无需下载/导入，开箱即用。
 
 ## AI 解说架构
 

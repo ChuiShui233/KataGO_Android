@@ -233,6 +233,27 @@ class MainActivity : ComponentActivity() {
     var clvkInstalled by mutableStateOf(false)
         private set
 
+    /** True when APK bundles a complete libOpenCL.so in jniLibs (builtin driver). */
+    val isBuiltinClvk: Boolean
+        get() = hasBuiltinDriver()
+
+    private fun hasBuiltinDriver(): Boolean {
+        if (com.chuishui.katago.BuildConfig.BUILTIN_CLVK) return true
+        return try {
+            val f = File(applicationInfo.nativeLibraryDir, "libOpenCL.so")
+            if (!f.exists() || f.length() <= 1_000_000L) return false
+            // aarch64 ELF check (e_machine == 183)
+            java.io.RandomAccessFile(f, "r").use { raf ->
+                if (raf.length() < 20) return false
+                val b = ByteArray(20)
+                raf.readFully(b)
+                b[0] == 0x7f.toByte() && b[1] == 'E'.code.toByte() &&
+                    b[2] == 'L'.code.toByte() && b[3] == 'F'.code.toByte() &&
+                    ((b[18].toInt() and 0xff) or ((b[19].toInt() and 0xff) shl 8)) == 183
+            }
+        } catch (_: Exception) { false }
+    }
+
     /** Progress (0..1) of an ongoing clvk import/download, or null when idle. */
     var openClTransferProgress by mutableStateOf<Float?>(null)
         private set
@@ -462,7 +483,7 @@ class MainActivity : ComponentActivity() {
         personalization = com.chuishui.katago.config.PersonalizationSettings.load(this)
         themePreference = prefs.getInt("theme", 0)
         languagePreference = prefs.getString("language", "system") ?: "system"
-        clvkInstalled = File(filesDir, "libOpenCL.so").exists()
+        clvkInstalled = hasBuiltinDriver() || File(filesDir, "libOpenCL.so").exists()
         showOnboarding = !prefs.getBoolean("onboarded", false)
         enableEdgeToEdge()
         // First launch: if the system can still kill the background download,
@@ -541,7 +562,7 @@ class MainActivity : ComponentActivity() {
                 OpenClDownloadWorker.status.collect { s ->
                     if (s != null) {
                         openClImportStatus = s
-                        if (s.first) clvkInstalled = File(filesDir, "libOpenCL.so").exists()
+                        if (s.first) clvkInstalled = hasBuiltinDriver() || File(filesDir, "libOpenCL.so").exists()
                         Toast.makeText(this@MainActivity, s.second, Toast.LENGTH_LONG).show()
                         // Ask for the battery-optimization exemption only after
                         // the download finished: requesting it at download start
@@ -618,6 +639,7 @@ class MainActivity : ComponentActivity() {
     // ---- OpenCL library import (clvk) --------------------------------------
 
     private fun importOpenClLib(context: Context, uri: Uri) {
+        if (isBuiltinClvk) return
         openClImportStatus = true to getString(R.string.opencl_importing)
         openClTransferPhase = 3
         openClTransferProgress = 0f
@@ -678,7 +700,7 @@ class MainActivity : ComponentActivity() {
             openClTransferPhase = 0
             openClTransferSpeed = null
             openClImportStatus = ok to msg
-            if (ok) clvkInstalled = File(context.filesDir, "libOpenCL.so").exists()
+            if (ok) clvkInstalled = hasBuiltinDriver() || File(context.filesDir, "libOpenCL.so").exists()
             Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
         }
     }
@@ -687,6 +709,7 @@ class MainActivity : ComponentActivity() {
      *  running (with a progress notification) even if the UI is closed or the
      *  process is killed. Also asks for a battery-optimization exemption. */
     fun downloadOpenClLib() {
+        if (isBuiltinClvk) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -1956,6 +1979,7 @@ class MainActivity : ComponentActivity() {
                                     onForceGpuChange = { forceGpu = it },
                                     gpuDisabled = gpuDisabled,
                                     clvkInstalled = clvkInstalled,
+                                    isBuiltinClvk = isBuiltinClvk,
                                     maxVisits = maxVisits,
                                     onMaxVisitsChange = { maxVisits = it },
                                     maxTimeSec = maxTimeSec,
@@ -2046,6 +2070,7 @@ class MainActivity : ComponentActivity() {
                     OnboardingScreen(
                         darkTheme = darkTheme,
                         clvkInstalled = clvkInstalled,
+                        isBuiltinClvk = isBuiltinClvk,
                         openClTransferProgress = openClTransferProgress,
                         openClTransferPhase = openClTransferPhase,
                         openClTransferSpeed = openClTransferSpeed,

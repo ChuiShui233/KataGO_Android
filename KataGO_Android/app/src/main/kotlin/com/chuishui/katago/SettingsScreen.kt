@@ -1,7 +1,12 @@
 package com.chuishui.katago
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,9 +53,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.MaterialTheme
@@ -71,6 +78,10 @@ import io.github.composefluent.icons.filled.Copy
 import io.github.composefluent.icons.filled.Document
 import io.github.composefluent.icons.filled.Flag
 import io.github.composefluent.icons.filled.Flash
+import io.github.composefluent.icons.filled.Home
+import io.github.composefluent.icons.filled.Person
+import io.github.composefluent.icons.filled.Search
+import io.github.composefluent.icons.filled.Settings
 import io.github.composefluent.icons.filled.Search
 import io.github.composefluent.icons.filled.Settings
 import io.github.composefluent.surface.Card
@@ -84,6 +95,7 @@ fun SettingsScreen(
     onForceGpuChange: (Boolean) -> Unit,
     gpuDisabled: Boolean,
     clvkInstalled: Boolean,
+    isBuiltinClvk: Boolean = false,
     maxVisits: Int,
     onMaxVisitsChange: (Int) -> Unit,
     maxTimeSec: Float,
@@ -154,6 +166,7 @@ fun SettingsScreen(
         ) { category ->
             when (category) {
                 -1 -> SettingsMainPage(
+                    isBuiltinClvk = isBuiltinClvk,
                     onSelectCategory = { selectedCategory = it },
                 )
                 0 -> SettingsSubPage(
@@ -251,22 +264,40 @@ fun SettingsScreen(
                         onShowRestoreConfirm = { showRestoreConfirm = true },
                     )
                 }
-                6 -> SettingsSubPage(
-                    title = stringResource(R.string.settings_cat_opencl),
-                    onBack = { selectedCategory = -1 },
-                ) {
-                    OpenClSettingsContent(
-                        clvkInstalled = clvkInstalled,
-                        openClImportStatus = openClImportStatus,
-                        onOpenClSetup = onOpenClSetup,
-                        onShowReinstallConfirm = { showReinstallConfirm = true },
-                    )
+                6 -> if (isBuiltinClvk) {
+                    SettingsSubPage(
+                        title = stringResource(R.string.settings_cat_opencl),
+                        onBack = { selectedCategory = -1 },
+                    ) {
+                        Card(onClick = {}, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("内置完整驱动", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "当前版本已内置完整 Vulkan 驱动 (libOpenCL.so)，无需手动下载或导入。",
+                                    fontSize = 12.sp,
+                                    color = FluentTheme.colors.text.text.secondary,
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    SettingsSubPage(
+                        title = stringResource(R.string.settings_cat_opencl),
+                        onBack = { selectedCategory = -1 },
+                    ) {
+                        OpenClSettingsContent(
+                            clvkInstalled = clvkInstalled,
+                            openClImportStatus = openClImportStatus,
+                            onOpenClSetup = onOpenClSetup,
+                            onShowReinstallConfirm = { showReinstallConfirm = true },
+                        )
+                    }
                 }
                 7 -> SettingsSubPage(
                     title = stringResource(R.string.settings_cat_about),
                     onBack = { selectedCategory = -1 },
                 ) {
-                    Text(stringResource(R.string.about_text))
+                    AboutContent()
                 }
             }
         }
@@ -325,7 +356,7 @@ private enum class SettingCategory(
 }
 
 @Composable
-private fun SettingsMainPage(onSelectCategory: (Int) -> Unit) {
+private fun SettingsMainPage(isBuiltinClvk: Boolean, onSelectCategory: (Int) -> Unit) {
     val scrollState = rememberScrollState()
     Column(
         Modifier
@@ -337,6 +368,7 @@ private fun SettingsMainPage(onSelectCategory: (Int) -> Unit) {
         Text(stringResource(R.string.settings_title), fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(16.dp))
         SettingCategory.entries.forEachIndexed { index, category ->
+            if (isBuiltinClvk && category == SettingCategory.OPENCL) return@forEachIndexed
             CategoryCard(
                 title = stringResource(category.titleRes),
                 hint = stringResource(category.hintRes),
@@ -985,5 +1017,180 @@ private fun SwitchSettingCard(
                 trailing()
             }
         }
+    }
+}
+
+@Composable
+private fun AboutContent() {
+    val context = LocalContext.current
+    val pm = context.packageManager
+    val pkgInfo = remember {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.PackageInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getPackageInfo(context.packageName, 0)
+            }
+        } catch (_: Exception) { null }
+    }
+    val versionName = pkgInfo?.versionName ?: com.chuishui.katago.BuildConfig.VERSION_NAME
+    val versionCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+        pkgInfo?.longVersionCode ?: com.chuishui.katago.BuildConfig.VERSION_CODE.toLong()
+    } else {
+        @Suppress("DEPRECATION")
+        pkgInfo?.versionCode?.toLong() ?: com.chuishui.katago.BuildConfig.VERSION_CODE.toLong()
+    }
+    fun openUrl(url: String) {
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+        } catch (_: Exception) {
+            Toast.makeText(context, url, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Card(
+            onClick = {},
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.about_app_logo),
+                    contentDescription = "KataGO",
+                    modifier = Modifier.size(72.dp).clip(RoundedCornerShape(16.dp)),
+                )
+                Spacer(Modifier.height(12.dp))
+                Text("KataGO", fontSize = 22.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(4.dp))
+                ProvideTextStyle(FluentTheme.typography.caption.copy(FluentTheme.colors.text.text.secondary)) {
+                    Text(stringResource(R.string.about_subtitle), fontSize = 12.sp, textAlign = TextAlign.Center)
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Card(onClick = {}, shape = RoundedCornerShape(20.dp)) {
+                        Text(
+                            stringResource(R.string.about_version, versionName, versionCode.toInt()),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                ProvideTextStyle(FluentTheme.typography.caption.copy(FluentTheme.colors.text.text.secondary)) {
+                    Text(
+                        stringResource(R.string.about_package, context.packageName),
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        stringResource(R.string.about_build, "$versionCode"),
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        }
+
+        Card(onClick = {}, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Image(
+                        painter = painterResource(id = R.drawable.github_logo),
+                        contentDescription = "GitHub",
+                        modifier = Modifier.size(36.dp),
+                        colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(FluentTheme.colors.text.text.primary),
+                    )
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(stringResource(R.string.about_github_card_title), fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                        Text(stringResource(R.string.about_github_card_hint), fontSize = 12.sp, color = FluentTheme.colors.text.text.secondary)
+                        Text(stringResource(R.string.about_github_follow_hint), fontSize = 11.sp, color = FluentTheme.colors.text.text.secondary.copy(alpha = 0.8f))
+                    }
+                }
+                Text(stringResource(R.string.about_github_star_text), fontSize = 12.sp, color = FluentTheme.colors.text.text.secondary)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AccentButton(onClick = { openUrl("https://github.com/ChuiShui233/KataGO_Android") }) {
+                        Text(stringResource(R.string.about_github_visit), fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        Card(onClick = {}, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.Flash, null, modifier = Modifier.size(18.dp))
+                    Text(stringResource(R.string.about_engine_title), fontWeight = FontWeight.SemiBold)
+                }
+                Text(stringResource(R.string.about_engine_desc), fontSize = 12.sp, color = FluentTheme.colors.text.text.secondary)
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.Settings, null, modifier = Modifier.size(18.dp))
+                    Text(stringResource(R.string.about_stack_title), fontWeight = FontWeight.SemiBold)
+                }
+                Text(stringResource(R.string.about_stack_desc), fontSize = 12.sp, color = FluentTheme.colors.text.text.secondary)
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Filled.Document, null, modifier = Modifier.size(18.dp))
+                    Text(stringResource(R.string.about_model_path), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                }
+                Text(stringResource(R.string.about_model_path_value), fontSize = 11.sp, color = FluentTheme.colors.text.text.secondary)
+            }
+        }
+
+        Card(onClick = {}, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.about_links_title), fontWeight = FontWeight.SemiBold)
+                AboutLinkRow(label = stringResource(R.string.about_link_github), url = "https://github.com/ChuiShui233/KataGO_Android", onOpen = ::openUrl)
+                AboutLinkRow(label = stringResource(R.string.about_link_katago), url = "https://github.com/lightvector/KataGo", onOpen = ::openUrl)
+                AboutLinkRow(label = stringResource(R.string.about_link_clvk), url = "https://github.com/kpet/clvk", onOpen = ::openUrl)
+            }
+        }
+
+        Card(onClick = {}, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(stringResource(R.string.about_license_title), fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.about_license_desc), fontSize = 12.sp, color = FluentTheme.colors.text.text.secondary)
+                Spacer(Modifier.height(4.dp))
+                ProvideTextStyle(FluentTheme.typography.caption.copy(FluentTheme.colors.text.text.secondary)) {
+                    Text("KataGo © lightvector · clvk © kpet", fontSize = 11.sp)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        ProvideTextStyle(FluentTheme.typography.caption.copy(FluentTheme.colors.text.text.secondary.copy(alpha = 0.7f))) {
+            Text(
+                stringResource(R.string.about_text),
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun AboutLinkRow(label: String, url: String, onOpen: (String) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(Modifier.weight(1f).padding(end = 8.dp)) {
+            Text(label, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(url, fontSize = 11.sp, color = FluentTheme.colors.text.text.secondary)
+        }
+        AccentButton(onClick = { onOpen(url) }) { Text(stringResource(R.string.about_open), fontSize = 11.sp) }
     }
 }
